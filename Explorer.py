@@ -278,7 +278,7 @@ class kMCNN:
 
         return np.max(E), history.history[-1][np.argmax(E)][0] ###Problem Child!
 
-    def MD(self, prev, mThresh = 0.1, eMax = 15, steps=50):
+    def MD(self, prev, mThresh = 0.1, eMax = 15, steps=50,custom=0.):
         s = time.time()
         U = self.energy()
 
@@ -293,14 +293,17 @@ class kMCNN:
 
             m = 0.
             while m < mThresh:
-                cmd = 'velocity all create 3000. ' + str( int( 100*(time.time()-s)*(comm.Get_rank()+1) )%1000000 + 1 ) + ' rot yes dist gaussian'
-                self.atoms.command('fix md all nvt temp 3000. 3000. 0.01')
-                self.atoms.command(cmd)
+                if custom == 0.:
+                    cmd = 'velocity all create 3000. ' + str( int( 100*(time.time()-s)*(comm.Get_rank()+1) )%1000000 + 1 ) + ' rot yes dist gaussian'
+                    self.atoms.command('fix md all nvt temp 3000. 3000. 0.01')
+                    self.atoms.command(cmd)
 
-                d=0.
-                while d < mThresh:
-                    self.atoms.command('run ' + str(numStep) )
-                    d, t = self.distance(start)
+                    d=0.
+                    while d < mThresh:
+                        self.atoms.command('run ' + str(numStep) )
+                        d, t = self.distance(start)
+                else:
+                    self.atoms.file(custom)
 
                 mid = self.getCoords()
                 self.atoms.command('unfix md')
@@ -728,6 +731,9 @@ class kMCNN:
         return np.max(distances),np.sum(distances)
 
     def findTransition(self,n,energyThresh, iEnergy, dx, maxTime=25, mThresh=0.01):
+        if comm.Get_rank() == 0:
+            print('EVF: FThresh: ' + str(self.F_THRESH) + ' BThresh: ' + str(self.B_THRESH) + ' Stepsize: ' + str(self.stepSize))
+            
         initial = self.getCoords()
         atoms = np.copy(initial)
         prevStep = np.zeros(len(atoms))
@@ -890,7 +896,14 @@ class kMCNN:
         print('Timed Out of Solution.')
         return False,self.energy(),newton,curv
 
-    def exploreLandscape(self,num,timeLimit,energyThresh):
+    def exploreLandscape(self,num,timeLimit,energyThresh,fthresh=0.,bthresh=0.,ss=0.,custom=0.):
+
+        if fthresh != 0:
+            self.F_THRESH = fthresh
+        if bthresh != 0:
+            self.B_THRESH = bthresh
+        if ss != 0:
+            self.stepSize = ss
 
         start = time.time()
         # self.minimize()
@@ -950,7 +963,7 @@ class kMCNN:
                 if (self.freqMD==0 or (self.n)%self.freqMD != 0) and (self.freqSV == 0 or (self.n)%self.freqSV != 0) :
                     F, tEnergy, transition, curv = self.findTransition(loc,energyThresh,prev,self.stepSize) ### Search transition
                 elif ( self.freqMD!=0 and (self.n)%self.freqMD == 0 ):
-                    F, tEnergy, transition, curv = self.MD(curr)
+                    F, tEnergy, transition, curv = self.MD(curr,custom=custom)
                 else:
                     F, tEnergy, transition, curv = self.shove(random.randrange(3*self.atoms.get_natoms()))
 
@@ -962,7 +975,7 @@ class kMCNN:
                         self.setCoords(startLocation)
                         F, tEnergy, transition, curv = self.MD(curr)
 
-                if F and (iE > tEnergy or self.energy() > tEnergy):
+                if F and (iE+energyThresh > tEnergy or self.energy()+energyThresh > tEnergy):
                     F = False
                     print('|| Transition Point Did Not Meet Criteria || Restarting Search ||')
 
@@ -1036,7 +1049,18 @@ n = 0
 freqMD = 0
 freqSV = 0
 
+custom = 0
+fthresh = 0.
+bthresh = 0.
+stepSize = 0.
+
 for a in range(1,len(sys.argv),2):
+    if sys.argv[a] == '-stepsize':
+        stepSize = float(sys.argv[a+1])
+    if sys.argv[a] == '-force':
+        fthresh = float(sys.argv[a+1])
+    if sys.argv[a] == '-curve':
+        bthresh = float(sys.argv[a+1])
     if sys.argv[a] == '-file':
         file = sys.argv[a+1]
     elif sys.argv[a] == '-press':
@@ -1051,6 +1075,8 @@ for a in range(1,len(sys.argv),2):
         help = True
     elif sys.argv[a] == '-center':
         center=False
+    elif sys.argv[a] == '-cusom':
+        custom = self.argv[a+1]
     elif sys.argv[a] == '-anchor':
         n = int(sys.argv[a+1])
     elif sys.argv[a] == '-jump' or sys.argv[a] == '-md':
@@ -1062,7 +1088,7 @@ if file == '' or help == True:
     print('')
     print('Error: Incorrect Usage input is incorrect')
     print('\tProper Usage is:')
-    print('\tpython kMCNN.py -file [input] \n\n\tOptional:\n\t[  -press [pressure in atmosphere] -num [number of runs]\n\t -time [max time in hours] -thresh [energy threshold]\n\t -anchor [atom to locate] -jump [every n steps for MD]\n\t -shove [How far to shove in angstroms]  ]')
+    print('\tpython kMCNN.py -file [input] \n\n\tOptional:\n\t[-force  [force threshold]\n\t -stepsize [Size of each step in eigenvector following]\n\t -curve  [curvature (eigen value threshold)]\n\t -press  [pressure in atmosphere]\n\t -num    [number of runs]\n\t -time   [max time in hours]\n\t -thresh [energy threshold]\n\t -center [Should the system be centered]\n\t -md     [every n steps for MD]\n\t -shove  [How far to shove in angstroms]\n\t -custom [custom script for MD exploration] ]')
     print('')
     exit()
 
@@ -1104,31 +1130,6 @@ if comm.Get_rank()==0 or not parallel:
 initialTime = time.time()
 sim = kMCNN(init(file),press,center,n,freqMD,freqSV)
 comm.Barrier()
-
-# L = sim.atoms.extract_global("boxxhi", 1) - sim.atoms.extract_global("boxxlo", 1)
-# sim.write(1)
-# L-=1.
-# cmd = 'change_box all x final 0. ' + str( L ) + ' y final 0. ' + str( L ) + ' z final 0. ' + str(L) + ' set remap'
-# sim.atoms.command(cmd)
-# sim.write(2)
-# exit()
 print ('Starting Simulation on Process: ' + str(comm.Get_rank()) + '\tStarting Energy: ' + str(sim.energy()))
-
-# for i in range(10):
-#     a = sim.getCoords()
-#     a[0] += 1.
-#     sim.setCoords(a)
-#     a[0] -= 1.
-#     sim.minimize()
-#     sim.setCoords(a)
-#     print(sim.energy(a))
-#
-# exit()
-# sim.write()
-# a = sim.getCoords()
-# sim.load(0)
-# print(np.max(a-sim.getCoords()))
-# print(sim.energy())
-# exit()
-sim.exploreLandscape(num,timeLimit,thresh)
+sim.exploreLandscape(num,timeLimit,thresh,fthresh,bthresh,stepSize,custom)
 print ('Exiting Process: '+ str(comm.Get_rank() ) + ' | Total Wall Time: ' + str((time.time()- initialTime)/3600.) + ' hrs.' )
