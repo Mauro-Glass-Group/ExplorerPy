@@ -215,11 +215,17 @@ class kMCNN:
             c = np.copy( image.data[0] )
         else:
             c = np.copy( image )
+
+        i = self.getCoords()
+        self.setCoords(c)
+        e = self.eval('pe')
+        self.setCoords(i)
         # c[:-1] *= c[-1]
-        return np.asarray([self.energy( c )])
+        return np.asarray([e])
 
     def predict_energy_and_forces(self, image, delta=0.00001):
         # image.data[0][:-1]*=image.data[0][-1]
+        i = self.getCoords()
         self.setCoords( np.copy(image.data[0]) )
         f = self.getForces()
 
@@ -228,11 +234,15 @@ class kMCNN:
         else:
             f = np.append(f, [( self.press - self.eval('press') )*6.3e-7] )
 
+        e = self.eval('pe')
+        self.setCoords(i)
+
         return self.predict_energy(image.data[0]),np.asarray(f)
 
     def NEB(self,start,end,nimages=10,spring_constant=0.1):
         self.setCoords(start)
         U = (self.energy(start))
+        U = self.eval('pe')
 
         path = periodicPath.from_linear_end_points(np.copy(start), np.copy(end),
                         self.atoms.extract_global("boxxhi", 1) - self.atoms.extract_global("boxxlo", 1),
@@ -240,35 +250,36 @@ class kMCNN:
                         self.atoms.extract_global("boxzhi", 1) - self.atoms.extract_global("boxzlo", 1),
                         nimages, spring_constant)  # set 101 images, and k=1
 
-        # for a in path:
-        #     self.setCoords(a.data[0])
-        #     self.write()
-        #     print(self.energy())
-        #
-        # exit()
         neb =NEB(self, path) # initialize NEB
         history = neb.run(verbose=False,n_steps=100, optimizer=SGD(0.003)) # run
 
         E = []
-        d=[]
+        # d=[]
+        # j =[]
 
         E.append(U)
-        d.append(0)
+        # d.append(0)
+        # j.append(self.eval('pe'))
 
         for i in history.history[-1][1:-1]:
             self.setCoords(i[0])
             E.append(self.energy())
-            d.append(self.distance(start)[1])
+            # d.append(self.distance(start)[1])
+            # j.append(self.eval('pe'))
 
         self.setCoords(end)
         E.append(self.energy())
-        d.append(self.distance(start)[1])
 
+        # d.append(self.distance(start)[1])
+        # j.append(self.eval('pe'))
         # if np.max(E) - self.energy(start) < -1e-4 or np.max(E) == self.energy(start) or np.max(E) == self.energy(end):
         # print(d)
         # print(E)
         # plt.plot(d,E,'.',markersize=9,color='blue')
         # plt.plot(d,E,'-',color='blue')
+        # plt.plot(d,j,'.',markersize=9,color='orange')
+        # plt.plot(d,j,'-',color='orange')
+        #
         # plt.axvline(d[np.argmax(E)])
         # plt.show()
         # exit()
@@ -733,7 +744,7 @@ class kMCNN:
     def findTransition(self,n,energyThresh, iEnergy, dx, maxTime=25, mThresh=0.01):
         if comm.Get_rank() == 0:
             print('EVF: FThresh: ' + str(self.F_THRESH) + ' BThresh: ' + str(self.B_THRESH) + ' Stepsize: ' + str(self.stepSize))
-            
+
         initial = self.getCoords()
         atoms = np.copy(initial)
         prevStep = np.zeros(len(atoms))
