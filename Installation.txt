@@ -1,0 +1,22 @@
+Software Description:
+
+ExplorerPy is a software written to explore energy landscapes efficiently while retaining the accuracy needed to understand the complex phenomena inherently informed by the topography of the landscape such as relaxation. The software is written to be modular, easily expandable and allow a mixing of exploration methods. 
+
+Dependencies:
+
+Numpy, Scipy, Lammps-python, lammps shared library, mpi4py, MEP python library, Lammps-hessian, pandas, matplotlib, python3.7, MPI, ASE (future)
+
+Installation:
+
+To install the python libraries (assuming that mpi has already been configured):
+[pip install numpy scipy mep pandas matplotlib mpi4py]
+
+Lammps-Hessian installation can be found elsewhere. (https://cmrlrep.lab.uic.edu/lammps_hessian.html)
+
+To install lammps as a shared library:
+[make yes-python]
+[make yes-local_lammps_hessian]
+[make yes-(other packages that are of interested)]
+[make mode=shlib mpi]
+[make install-python]
+
