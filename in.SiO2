@@ -1,0 +1,36 @@
+### Input Script for SiO2
+units           metal
+boundary        p p p
+atom_style      charge
+comm_modify     mode single vel yes
+
+read_data       SiO2.dat
+####read_data	startingConfiguration.data
+
+thermo          1000
+thermo_style    custom step temp press etotal pe enthalpy density
+thermo_modify   flush yes
+
+mass            1 28.085  ## Silicon
+mass            2 15.999  ## Oxygen
+
+group           Si type 1 1
+group           O type 2 2
+
+set             group O charge -0.945
+set             group Si charge 1.89
+
+kspace_style    pppm 0.0001
+pair_style      buck/coul/long 11
+
+pair_coeff      * * 0 1 0
+
+pair_coeff      2 2 9022.79 0.265 85.0921          ### O  - O
+pair_coeff      1 2 50306.10 0.161 46.2978         ### Si - O
+
+timestep        0.001
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check no
+
+run 0
