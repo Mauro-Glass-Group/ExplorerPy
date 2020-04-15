@@ -964,7 +964,7 @@ class kMCNN:
             while not F:
                 self.load(curr)
 
-                if value[n] < self.B_THRESH:
+                if value[n] < self.B_THRESH+1.:
                     n=n+1
 
                 loc = np.argmin( np.abs(value[n] - a) )
@@ -976,7 +976,10 @@ class kMCNN:
                 elif ( self.freqMD!=0 and (self.n)%self.freqMD == 0 ):
                     F, tEnergy, transition, curv = self.MD(curr,custom=custom)
                 else:
-                    F, tEnergy, transition, curv = self.shove(random.randrange(3*self.atoms.get_natoms()))
+                    n = random.randrange(3*self.atoms.get_natoms())
+                    if value[n] < self.B_THRESH+1.:
+                        n=n+1
+                    F, tEnergy, transition, curv = self.shove(n)
 
                 at += 1 ### Iterating the attempts
                 n+=1
@@ -1099,7 +1102,7 @@ if file == '' or help == True:
     print('')
     print('Error: Incorrect Usage input is incorrect')
     print('\tProper Usage is:')
-    print('\tpython kMCNN.py -file [input] \n\n\tOptional:\n\t[-force  [force threshold]\n\t -stepsize [Size of each step in eigenvector following]\n\t -curve  [curvature (eigen value threshold)]\n\t -press  [pressure in atmosphere]\n\t -num    [number of runs]\n\t -time   [max time in hours]\n\t -thresh [energy threshold]\n\t -center [Should the system be centered]\n\t -md     [every n steps for MD]\n\t -shove  [How far to shove in angstroms]\n\t -custom [custom script for MD exploration] ]')
+    print('\tpython kMCNN.py -file [input] \n\n\tOptional:\n\t[-force  [force threshold]\n\t -stepsize [Size of each step in eigenvector following]\n\t -curve  [curvature (eigen value threshold)]\n\t -press  [pressure in atmosphere]\n\t -num    [number of runs]\n\t -time   [max time in hours]\n\t -thresh [energy threshold]\n\t -center [Should the system be centered]\n\t -md     [every n steps for MD]\n\t -shove  [every n steps for ET]\n\t -custom [custom script for MD exploration] ]')
     print('')
     exit()
 
