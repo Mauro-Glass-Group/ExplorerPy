@@ -53,8 +53,7 @@ if comm.Get_size() ==1:
 
 def reduce(delta,Lx,Ly,Lz):
     s = False
-
-    if delta.shape[0] == len(delta):
+    if delta.shape[0] == len(delta.flatten()):
         d = np.reshape(delta[:-1], (int((len(delta)-1)/3) , 3 ) ).T
         s = True
     else:
@@ -239,7 +238,7 @@ class kMCNN:
 
         return self.predict_energy(image.data[0]),np.asarray(f)
 
-    def NEB(self,start,end,nimages=10,spring_constant=0.1):
+    def NEB(self,start,end,nimages=7,spring_constant=1.):
         self.setCoords(start)
         U = (self.energy(start))
         U = self.eval('pe')
@@ -289,7 +288,7 @@ class kMCNN:
 
         return np.max(E), history.history[-1][np.argmax(E)][0] ###Problem Child!
 
-    def MD(self, prev, mThresh = 0.1, eMax = 15, steps=50,custom=0.):
+    def MD(self, prev, mThresh = 0.1, eMax = 20., steps=200,custom=0.):
         s = time.time()
         U = self.energy()
 
@@ -305,8 +304,8 @@ class kMCNN:
             m = 0.
             while m < mThresh:
                 if custom == 0.:
-                    cmd = 'velocity all create 3000. ' + str( int( 100*(time.time()-s)*(comm.Get_rank()+1) )%1000000 + 1 ) + ' rot yes dist gaussian'
-                    self.atoms.command('fix md all nvt temp 3000. 3000. 0.01')
+                    cmd = 'velocity all create 1500. ' + str( int( 100*(time.time()-s)*(comm.Get_rank()+1) )%1000000 + 1 ) + ' rot yes dist gaussian'
+                    self.atoms.command('fix md all nvt temp 1500. 1500. 0.1')
                     self.atoms.command(cmd)
 
                     d=0.
@@ -354,7 +353,26 @@ class kMCNN:
                         + 's dE: ' + str( round(U - newEnergy,3) ) )
         return True, barr+U, tPoint, -1
 
-    def shove(self,n,eMax=15,dist=1.0,mThresh=0.1):
+    def shove(self,n,eMax=15,dist=0.2,mThresh=0.1):
+        a,b = self.hessian()
+        initCurve =a[n]
+
+        def distAtom():
+            s = self.getCoords()
+            s = np.reshape(s[:-1],(self.atoms.get_natoms(),3))
+            min=100.
+
+            for an in range(len(s[:,0])):
+                Lx = self.atoms.extract_global("boxxhi", 1) - self.atoms.extract_global("boxxlo", 1)
+                Ly = self.atoms.extract_global("boxyhi", 1) - self.atoms.extract_global("boxylo", 1)
+                Lz = self.atoms.extract_global("boxzhi", 1) - self.atoms.extract_global("boxzlo", 1)
+
+                d = reduce(s - s[an,:],Lx,Ly,Lz)
+                d = np.linalg.norm(d,axis=1)
+
+                if np.sort(d)[1] < min:
+                    min = np.sort(d)[1]
+            return min
 
         s = time.time()
         st = self.getCoords()
@@ -363,45 +381,54 @@ class kMCNN:
 
         m = 0.
 
-        while m < mThresh:
+        d = np.copy(temp)
+        dL = 1.0
+
+        closeparm = 0.3
+        while m < mThresh:# or dL < closeparm:
             a,b = self.hessian()
 
             dat = np.copy(b[:,n])
             dat = np.reshape(dat,(self.atoms.get_natoms(),3))
             lmd = dist / np.max(np.linalg.norm(dat,axis=1))
 
+            d += lmd*np.append(b[:,n],[0])
 
-            d = np.copy(temp) + lmd*np.append(b[:,n],[0])
             self.setCoords(d)
             temp = self.getCoords()
-            m,total = self.distance(st)
-            pre = m
 
-            # print(self.eval('density'))
-            # print(self.eval('press'))
-            # print(self.eval('vol'))
+            # print(dL)
+            # dL = distAtom()
+
+            # if dL > closeparm:
             # print('')
-            # print('minimizing')
+            # print(self.energy())
             self.minimize()
-            end = self.getCoords()
             m,total = self.distance(st)
-
-            print(str(comm.Get_rank()) + ' :Pre-Min Jump: ' + str(round(pre,2)) + 'A\t' + ' :Min Dist: ' + str(round(m,2)) + 'A')
 
             if m < mThresh:
                 self.setCoords(temp)
 
-        print('Shoving Distance: ' + str(m) + ' Total Displacement: ' + str(total) )
+            print(str(comm.Get_rank()) + ' :Minimized Dist: ' + str(round(m,2)) + ' A')
+
+        end = self.getCoords()
+        m,total = self.distance(st)
+        print('Shoving Distance: ' + str(m) + ' Total Displacement: ' + str(total) + ' New Energy: ' +str(self.energy()))
+        print('')
+
+        if np.abs(self.energy() - initial) > eMax*10.:
+            return False, 0., self.getCoords(), initCurve
+
         barr, tPoint = self.NEB(st,self.getCoords())
 
         print ('Stats| Energy Found: ' + str(round(barr-initial,6)) + ' Time Since Start: ' + str(round(time.time()-s,3))
-                + 's dE: ' + str( -round(self.energy(st) - self.energy(),3) ) )
+                + 's dE: ' + str( -round(self.energy(st) - self.energy(),3) ) + '\n')
         self.setCoords(end)
 
         if barr-initial < eMax and barr > initial and barr > self.energy() and barr-initial > 1e-6:
-            return True, barr, tPoint, a[n]
+            return True, barr, tPoint, initCurve
         else:
-            return False, barr, tPoint, a[n]
+            return False, barr, tPoint, initCurve
 
     def __init__(self,sys, p, c, n, f , sf ): ### Initializer
         self.atoms = sys
@@ -421,10 +448,10 @@ class kMCNN:
 
         if len(A) == 0:
             self.n =0
-            self.i = 0
+            self.i =0
 
             print ('\nStaring New Run.\n')
-            self.atoms.command('min_style sd')
+            self.atoms.command('min_style cg')
             self.atoms.command('run 0')
 
             self.minimize()
@@ -635,6 +662,8 @@ class kMCNN:
 
     def minimize(self):
 
+        # print('minimization')
+
         if self.press != 999.:
         #     print(self.eval(press))
         #     print(self.energy())
@@ -677,6 +706,7 @@ class kMCNN:
         else:
             self.atoms.command("minimize 1e-9 1e-9 1000000 10000000") ### Pressure Issues
 
+        # print('/Minimization')
     def getForces(self):
         self.atoms.command('run 0')
         _data = np.array(self.atoms.gather_atoms("f", 1, 3), dtype=ct.c_double)
@@ -930,20 +960,14 @@ class kMCNN:
         crv = open('crv.dat','a')
 
         curr = self.i
-        # if comm.Get_rank() > 0:
-        #     F, tEnergy, transition, curv = self.MD(self.i)
-        #     pnum = self.write()
-        #     self.writeTS(transition,pnum)
-        #     trd.write( str( tEnergy ) + '\t' + str(comm.Get_rank()) + '\t' + str(0) + '\t' + str(int(self.i+1)) + '\t' + str(int(pnum+1)) + '\n' )
-        #     min.write( str( pnum+1 ) + '\t'+ str( self.energy() ) + '\t' + str( comm.Get_rank() ) + '\n' )
-        #     vol.write( str( pnum+1 ) +str( ( self.atoms.extract_global("boxxhi", 1) - self.atoms.extract_global("boxxlo", 1) )**3 ) + '\t' + str( comm.Get_rank() ) + '\n' )
-        #     crv.write( str( pnum+1 ) +str( curv ) + '\t' + str( comm.Get_rank() ) + '\n')
-        #
-        #     curr = pnum
-        #     prev = self.energy()
+        prevStruct = self.i+1
+        self.n = curr
 
+        while len(glob.glob('./kMC.*.xyz')) < self.i + num + comm.Get_size() and (time.time() - start)/3600. < timeLimit :
 
-        while len(glob.glob('./kMC.*.xyz')) < self.i + num and (time.time() - start)/3600. < timeLimit :
+            # self.n = len(glob.glob('./kMC.*.xyz'))+comm.Get_rank()
+
+            # pnum = self.n #len(glob.glob('./kMC.*.xyz')) + comm.Get_rank()
 
             begin = time.time()
             tEnergy = 0
@@ -957,12 +981,20 @@ class kMCNN:
 
             if self.i == curr:
                 n += comm.Get_rank()
+                self.n += comm.Get_rank()+1
+            else:
+                self.n = len(glob.glob('./kMC.*.xyz'))
+                # print(glob.glob('./kMC.*.xyz'))
+                # print(self.n)
+                # exit()
+            self.write(self.n)
+            pnum = self.n
 
             startLocation = np.copy(self.getCoords())
             iE = self.energy()
 
-            while not F:
-                self.load(curr)
+            while not F and len(glob.glob('./kMC.*.xyz')) < self.i + num + comm.Get_size() and (time.time() - start)/3600. < timeLimit :
+                self.load(pnum)
 
                 if value[n] < self.B_THRESH+1.:
                     n=n+1
@@ -976,9 +1008,9 @@ class kMCNN:
                 elif ( self.freqMD!=0 and (self.n)%self.freqMD == 0 ):
                     F, tEnergy, transition, curv = self.MD(curr,custom=custom)
                 else:
-                    n = random.randrange(3*self.atoms.get_natoms())
-                    if value[n] < self.B_THRESH+1.:
-                        n=n+1
+                    # n = random.randrange(3*self.atoms.get_natoms())
+                    # if value[n] < self.B_THRESH+1.:
+                    #     n=n+1
                     F, tEnergy, transition, curv = self.shove(n)
 
                 at += 1 ### Iterating the attempts
@@ -995,35 +1027,42 @@ class kMCNN:
 
                 newLoc = self.getCoords()
 
-            self.n = len(glob.glob('./kMC.*.xyz'))+comm.Get_rank()
-            pnum = len(glob.glob('./kMC.*.xyz')) + comm.Get_rank()
-            comm.Barrier()
-            self.write(pnum)
+            if F and len(glob.glob('./kMC.*.xyz')) < self.i + num + comm.Get_size() and (time.time() - start)/3600. < timeLimit:
+                # pnum = len(glob.glob('./kMC.*.xyz'))-1
+                print('WRITING OUT FINAL '+ str(pnum))
+                self.write(pnum)
 
-            ne = self.energy(newLoc)
-            ol = self.energy(startLocation)
+                ne = self.energy(newLoc)
+                ol = self.energy(startLocation)
 
-            self.setCoords(np.copy(newLoc))
-            self.writeTS(transition,pnum)
-            trd.write( str( tEnergy ) + '\t' + str(comm.Get_rank()) + '\t' + str(n) + '\t' + str(int(curr+1)) + '\t' + str(int(pnum+1)) + '\n' )
-            min.write( str(pnum+1) + '\t' + str( ne ) + '\t' + str( comm.Get_rank() ) + '\n' )
-            vol.write( str(pnum+1) + '\t' + str( self.eval('vol') ) + '\n' )
-            crv.write( str(pnum+1) + '\t' + str( curv ) + '\t' + str( comm.Get_rank() ) + '\n' )
+                self.setCoords(np.copy(newLoc))
+                self.writeTS(transition,pnum)
+                trd.write( str( tEnergy ) + '\t' + str(comm.Get_rank()) + '\t' + str(n) + '\t' + str(int(prevStruct)) + '\t' + str(int(pnum+1)) + '\n' )
+                min.write( str(pnum+1) + '\t' + str( ne ) + '\t' + str( comm.Get_rank() ) + '\n' )
+                vol.write( str(pnum+1) + '\t' + str( self.eval('vol') ) + '\n' )
+                crv.write( str(pnum+1) + '\t' + str( curv ) + '\t' + str( comm.Get_rank() ) + '\n' )
+                prevStruct = pnum+1
 
-            prev = self.energy(newLoc)
 
-            if comm.Get_rank() == 0:
+                trd.flush()
+                min.flush()
+                vol.flush()
+                crv.flush()
+
+                prev = self.energy(newLoc)
+
+                # if comm.Get_rank() == 0:
                 print ('\n')
-                print ('Total Time for Transition: ' + str((time.time() - begin)/60.) + ' min')
-                print ('Total Time since beginning: ' + str((time.time() - start)/3600.) + ' hrs')
+                print (str(comm.Get_rank()) + ': Total Time for Transition: ' + str((time.time() - begin)/60.) + ' min')
+                print (str(comm.Get_rank()) + ': Total Time since beginning: ' + str((time.time() - start)/3600.) + ' hrs')
                 print ('\n')
 
-            begin = time.time()
-            self.setCoords(newLoc)
+                begin = time.time()
+                self.setCoords(newLoc)
 
-            suc +=1
-            curr = pnum
-                # exit()
+                suc +=1
+
+                curr = len(glob.glob('./kMC.*.xyz'))
 
         trd.close()
         min.close()
