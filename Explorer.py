@@ -353,7 +353,7 @@ class kMCNN:
                         + 's dE: ' + str( round(U - newEnergy,3) ) )
         return True, barr+U, tPoint, -1
 
-    def shove(self,n,eMax=15,dist=0.2,mThresh=0.1):
+    def shove(self,n,eMax=15,dist=0.3,mThresh=0.1):
         a,b = self.hessian()
         initCurve =a[n]
 
@@ -460,10 +460,10 @@ class kMCNN:
 
                 e = round(self.energy() + 20.)
 
-                min = open('min.dat','w')
-                trd = open('tsd.dat','w')
-                vol = open('vol.dat','w')
-                crv = open('crv.dat','w')
+                min = open('min.'+str(comm.Get_rank())+'.dat','w')
+                trd = open('tsd.'+str(comm.Get_rank())+'.dat','w')
+                vol = open('vol.'+str(comm.Get_rank())+'.dat','w')
+                crv = open('crv.'+str(comm.Get_rank())+'.dat','w')
 
                 min.write('1\t' + str( self.energy() ) + '\t' + str( comm.Get_rank() ) +'\n' )
                 vol.write('1\t' + str( (self.atoms.extract_global("boxxhi", 1) - self.atoms.extract_global("boxxlo", 1))**3 ) + '\n' )
@@ -492,6 +492,21 @@ class kMCNN:
                 info.close()
 
         else:
+            min = open('min.'+str(comm.Get_rank())+'.dat','w')
+            trd = open('tsd.'+str(comm.Get_rank())+'.dat','w')
+            vol = open('vol.'+str(comm.Get_rank())+'.dat','w')
+            crv = open('crv.'+str(comm.Get_rank())+'.dat','w')
+
+            min.write('')
+            trd.write('')
+            vol.write('')
+            crv.write('')
+
+            min.close()
+            vol.close()
+            trd.close()
+            crv.close()
+
             print ('\nContinuing Run.\n')
             self.n = len(A)
             self.load(self.n-1)
@@ -671,8 +686,9 @@ class kMCNN:
 
             self.atoms.command('fix 1 all box/relax iso ' + str(self.press))
             def pr(l):
+                # i = self.atoms.extract_global("boxxhi", 1) - self.atoms.extract_global("boxxlo", 1)
                 dxl = 1
-                # self.atoms.command('minimize 1e-9 1e-9 100000 1000000')
+                self.atoms.command('minimize 1e-9 1e-9 100000 1000000')
                 a = ( self.eval('press') - self.press )
 
                 while np.abs(a) > self.P_THRESH:
@@ -954,10 +970,10 @@ class kMCNN:
         curv = 0.
         prev = self.energy()
 
-        min = open('min.dat','a')
-        trd = open('tsd.dat','a')
-        vol = open('vol.dat','a')
-        crv = open('crv.dat','a')
+        min = open('min.'+str(comm.Get_rank())+'.dat','a')
+        trd = open('tsd.'+str(comm.Get_rank())+'.dat','a')
+        vol = open('vol.'+str(comm.Get_rank())+'.dat','a')
+        crv = open('crv.'+str(comm.Get_rank())+'.dat','a')
 
         curr = self.i
         prevStruct = self.i+1
@@ -1029,7 +1045,7 @@ class kMCNN:
 
             if F and len(glob.glob('./kMC.*.xyz')) < self.i + num + comm.Get_size() and (time.time() - start)/3600. < timeLimit:
                 # pnum = len(glob.glob('./kMC.*.xyz'))-1
-                print('WRITING OUT FINAL '+ str(pnum))
+                # print('WRITING OUT FINAL '+ str(pnum))
                 self.write(pnum)
 
                 ne = self.energy(newLoc)
