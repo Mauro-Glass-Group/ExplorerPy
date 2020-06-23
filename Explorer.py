@@ -336,7 +336,8 @@ class kMCNN:
                     numStep+=2
                 else:
                     print ('Max Displacment Found: ' + str(round(m,3)) + ' Total Displacment: ' + str(round(disp,3)) + ' New Energy: ' + str(round(newEnergy,3) ) )
-
+            # print(prev)
+            # print('\n\n\n')
             self.load(prev)
             begin = self.getCoords()
 
@@ -353,7 +354,7 @@ class kMCNN:
                         + 's dE: ' + str( round(U - newEnergy,3) ) )
         return True, barr+U, tPoint, -1
 
-    def shove(self,n,eMax=15,dist=0.3,mThresh=0.1):
+    def shove(self,n,eMax=15,dist=0.25,mThresh=0.05):
         a,b = self.hessian()
         initCurve =a[n]
 
@@ -445,7 +446,7 @@ class kMCNN:
         # self.FPT = self.F_THRESH/20.
         self.center()
         self.atoms.command('velocity all set 0. 0. 0.')
-
+        comm.Barrier()
         if len(A) == 0:
             self.n =0
             self.i =0
@@ -456,7 +457,7 @@ class kMCNN:
 
             self.minimize()
             if comm.Get_rank() == 0:
-                self.write(0)
+                self.write(1)
 
                 e = round(self.energy() + 20.)
 
@@ -465,10 +466,13 @@ class kMCNN:
                 vol = open('vol.'+str(comm.Get_rank())+'.dat','w')
                 crv = open('crv.'+str(comm.Get_rank())+'.dat','w')
 
+                min.write('## Min State Information\n')
+                vol.write('## Volume of each basin\n')
+
                 min.write('1\t' + str( self.energy() ) + '\t' + str( comm.Get_rank() ) +'\n' )
                 vol.write('1\t' + str( (self.atoms.extract_global("boxxhi", 1) - self.atoms.extract_global("boxxlo", 1))**3 ) + '\n' )
-                trd.write('')
-                crv.write('')
+                trd.write('## Transition State Information\n')
+                crv.write('## Vibrational Information\n')
 
                 min.close()
                 vol.close()
@@ -491,26 +495,28 @@ class kMCNN:
                 info.write('COLOUR_BAR_LABEL \"Volume [Angstrom * 3]\"')
                 info.close()
 
+            else:
+
+                min = open('min.'+str(comm.Get_rank())+'.dat','w')
+                trd = open('tsd.'+str(comm.Get_rank())+'.dat','w')
+                vol = open('vol.'+str(comm.Get_rank())+'.dat','w')
+                crv = open('crv.'+str(comm.Get_rank())+'.dat','w')
+
+                min.write('## Min Energy Data\n')
+                trd.write('## Transition State Data\n')
+                vol.write('## Volume Data\n')
+                crv.write('## Vibrational Data\n')
+
+                min.close()
+                vol.close()
+                trd.close()
+                crv.close()
+
         else:
-            min = open('min.'+str(comm.Get_rank())+'.dat','w')
-            trd = open('tsd.'+str(comm.Get_rank())+'.dat','w')
-            vol = open('vol.'+str(comm.Get_rank())+'.dat','w')
-            crv = open('crv.'+str(comm.Get_rank())+'.dat','w')
-
-            min.write('')
-            trd.write('')
-            vol.write('')
-            crv.write('')
-
-            min.close()
-            vol.close()
-            trd.close()
-            crv.close()
-
             print ('\nContinuing Run.\n')
             self.n = len(A)
-            self.load(self.n-1)
-            self.i = self.n-1
+            self.load(A[self.n-comm.Get_size()])
+            self.i = self.n-comm.Get_size()
 
     def center(self):
         if self.c:
@@ -628,7 +634,8 @@ class kMCNN:
         self.center()
 
         self.atoms.command('reset_timestep 0')
-        cmd = 'dump dumpall all custom 1 kMC.' + str(num) + '.xyz id type x y z'
+        cmd = 'dump dumpall all custom 1 kMC.' + str(num) + '.' + str(comm.Get_rank()) + '.xyz id type x y z'
+        print('Writing on Proc: ' + str(comm.Get_rank()) + ' #: ' + str(num))
         self.atoms.command(cmd)
         self.atoms.command('run 0')
         self.atoms.command('undump dumpall')
@@ -636,7 +643,7 @@ class kMCNN:
     def writeTS(self,c,num):
         self.setCoords(c)
         self.center()
-        cmd = 'dump dumpall all atom 1 TP.' + str(num) + '.xyz'
+        cmd = 'dump dumpall all atom 1 TP.' + str(num) + '.' + str(comm.Get_rank()) + '.xyz'
         self.atoms.command(cmd)
         self.atoms.command('run 0')
         self.atoms.command('undump dumpall')
@@ -644,7 +651,10 @@ class kMCNN:
     def load(self,struct):
         try:
             struct= int(struct)
-            file = 'kMC.' + str(struct) + '.xyz'
+            if struct == 1:
+                file = 'kMC.' + str(struct) + '.' + str(0) + '.xyz'
+            else:
+                file = 'kMC.' + str(struct) + '.' + str(comm.Get_rank()) + '.xyz'
         except:
             file = struct
 
@@ -1003,8 +1013,8 @@ class kMCNN:
                 # print(glob.glob('./kMC.*.xyz'))
                 # print(self.n)
                 # exit()
-            self.write(self.n)
-            pnum = self.n
+            pnum = self.n+1
+            self.write(pnum)
 
             startLocation = np.copy(self.getCoords())
             iE = self.energy()
@@ -1022,7 +1032,7 @@ class kMCNN:
                 if (self.freqMD==0 or (self.n)%self.freqMD != 0) and (self.freqSV == 0 or (self.n)%self.freqSV != 0) :
                     F, tEnergy, transition, curv = self.findTransition(loc,energyThresh,prev,self.stepSize) ### Search transition
                 elif ( self.freqMD!=0 and (self.n)%self.freqMD == 0 ):
-                    F, tEnergy, transition, curv = self.MD(curr,custom=custom)
+                    F, tEnergy, transition, curv = self.MD(prevStruct,custom=custom)
                 else:
                     # n = random.randrange(3*self.atoms.get_natoms())
                     # if value[n] < self.B_THRESH+1.:
@@ -1037,7 +1047,7 @@ class kMCNN:
                         self.setCoords(startLocation)
                         F, tEnergy, transition, curv = self.MD(curr)
 
-                if F and (iE+energyThresh > tEnergy or self.energy()+energyThresh > tEnergy):
+                if not F or iE+energyThresh > tEnergy or self.energy()+energyThresh > tEnergy or tEnergy < prev or tEnergy < self.energy():
                     F = False
                     print('|| Transition Point Did Not Meet Criteria || Restarting Search ||')
 
@@ -1053,12 +1063,11 @@ class kMCNN:
 
                 self.setCoords(np.copy(newLoc))
                 self.writeTS(transition,pnum)
-                trd.write( str( tEnergy ) + '\t' + str(comm.Get_rank()) + '\t' + str(n) + '\t' + str(int(prevStruct)) + '\t' + str(int(pnum+1)) + '\n' )
-                min.write( str(pnum+1) + '\t' + str( ne ) + '\t' + str( comm.Get_rank() ) + '\n' )
-                vol.write( str(pnum+1) + '\t' + str( self.eval('vol') ) + '\n' )
-                crv.write( str(pnum+1) + '\t' + str( curv ) + '\t' + str( comm.Get_rank() ) + '\n' )
-                prevStruct = pnum+1
-
+                trd.write( str( tEnergy ) + '\t' + str(comm.Get_rank()) + '\t' + str(n) + '\t' + str(int(prevStruct)) + '\t' + str(int(pnum)) + '\n' )
+                min.write( str(pnum) + '\t' + str( ne ) + '\t' + str( comm.Get_rank() ) + '\n' )
+                vol.write( str(pnum) + '\t' + str( self.eval('vol') ) + '\n' )
+                crv.write( str(pnum) + '\t' + str( curv ) + '\t' + str( comm.Get_rank() ) + '\n' )
+                prevStruct = pnum
 
                 trd.flush()
                 min.flush()
@@ -1077,7 +1086,6 @@ class kMCNN:
                 self.setCoords(newLoc)
 
                 suc +=1
-
                 curr = len(glob.glob('./kMC.*.xyz'))
 
         trd.close()
