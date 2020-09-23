@@ -1,0 +1,40 @@
+#silica bulk simulation (preparation and mechanical test)
+# METAL Unit   <-> SI Unit
+# 1 Pressure = 100000 Pa ~1atm
+# 1 Distance = 1 Angstrom
+# 1 Energy   = 1 eV
+# 1 Time     = 1 ps
+# 1 Temp     = 1 K
+# 1 Density  = 1 g/cm^3
+# 1 mass     = 1 g/mol
+
+atom_modify     map yes
+units		    metal
+boundary 	    p p p
+atom_style	    charge	
+
+# read_data       ./sample.data
+read_data	SiO2.dat
+
+mass 		    2 15.9994  # O
+mass 		    1 28.0855  # Si
+set 		    type 2 charge -1.2  # O
+set 		    type 1 charge  2.4   # Si
+
+################# bks table method ########################################################
+pair_style      table linear 9001
+pair_coeff      1 1 BKS.wolf.table  Si-Si 
+pair_coeff      1 2 BKS.wolf.table  O-Si
+pair_coeff      2 2 BKS.wolf.table  O-O
+
+pair_write      1 1 9001 rsq 0.3 10.17 bks.wolf.Si-Si    Si-Si
+pair_write      1 2 9001 rsq 0.3 10.17 bks.wolf.O-Si   O-Si
+pair_write      2 2 9001 rsq 0.3 10.17 bks.wolf.O-O  O-O
+neighbor        0.5 bin
+neigh_modify    every 1 delay 0 check yes
+########################################################################################
+thermo          1000
+thermo_style    custom step temp press etotal pe enthalpy density
+thermo_modify   flush yes
+
+run 1

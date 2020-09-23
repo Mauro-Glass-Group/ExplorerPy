@@ -1,0 +1,13 @@
+DELTA 0.05
+FIRST -1794
+MAXTSENERGY -1794
+
+CENTREGMIN
+CONNECTMIN 0
+
+LEVELS 1000
+MINIMA minsort.dat
+TS tsd.dat
+ENERGY_LABEL "Enthalpy [eV]"
+TRVAL 0 vol.dat
+COLOUR_BAR_LABEL "Volume [Angstrom * 3]"
