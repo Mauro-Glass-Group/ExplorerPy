@@ -190,8 +190,22 @@ class emaxCB(Callback):
         logger.info("NEB run finishes")
 
     def step_begin(self,n):
-        if np.linalg.norm(np.concatenate(self.model.forces, axis=0)) > 1e8:
-            self.model.stop = True
+        for e in self.model.energies[1:-1]:
+            if e[0] > np.abs(self.model.energies[0]):
+                self.model.stop=True
+
+        for f in self.model.forces[1:-1]:
+            if np.linalg.norm(f) > 1e9 or f[-1] > 1e5:
+                self.model.stop = True
+
+    def step_end(self,n):
+        for e in self.model.energies[1:-1]:
+            if e[0] > np.abs(self.model.energies[0]):
+                self.model.stop=True
+
+        for f in self.model.forces[1:-1]:
+            if np.linalg.norm(f) > 1e9 or f[-1] > 1e5:
+                self.model.stop = True
 
 class kMCNN:
     atoms = []
@@ -211,8 +225,8 @@ class kMCNN:
     c = False
 
     press = 999.
-    lStep = 0.06
-    dL = 0.001
+    lStep = 0.1
+    dL = 0.01
 
     ref=[]
 
@@ -232,7 +246,7 @@ class kMCNN:
         self.setCoords(c)
         e = self.eval('pe')
         self.setCoords(i)
-        # c[:-1] *= c[-1]
+
         return np.asarray([e])
 
     def predict_energy_and_forces(self, image, delta=0.00001):
@@ -241,10 +255,12 @@ class kMCNN:
         self.setCoords( np.copy(image.data[0]) )
         f = self.getForces()
 
-        if self.press == 999.:
+        s= self.eval('vol') / (self.atoms.extract_global('boxxhi',1) - self.atoms.extract_global('boxxlo',1))
+
+        if self.press == 999:
             f = np.append(f,[0])
         else:
-            f = np.append(f, [( self.press - self.eval('press') )*6.3e-7] )
+            f = np.append(f, [( self.press - self.eval('press') )*6.32423526e-7] )
 
         e = self.eval('pe')
         self.setCoords(i)
@@ -263,9 +279,23 @@ class kMCNN:
                         self.atoms.extract_global("boxyhi", 1) - self.atoms.extract_global("boxylo", 1),
                         self.atoms.extract_global("boxzhi", 1) - self.atoms.extract_global("boxzlo", 1),
                         nimages, spring_constant)  # set 101 images, and k=1
+        i = 1
+        Emax = -1e30
+        for img in path[1:-1]:
+            self.setCoords(img.data[0])	
+            while np.abs(self.eval('press')-self.press) < self.P_THRESH:
+                self.pressure()
+            U = self.energy()
+            if U > Emax:
+                Emax = U
+            path[i].data[0] = self.getCoords()
+            i += 1
+
+        if Emax > 1e5:
+            return 10000, self.getCoords()
 
         neb =NEB(self, path) # initialize NEB
-        history = neb.run(callbacks = cb,verbose=False,n_steps=100, optimizer=SGD(0.01)) # run
+        history = neb.run(callbacks = cb,verbose=False,n_steps=100, optimizer=SGD(0.0001)) # run
 
         E = []
         # d=[]
@@ -318,8 +348,8 @@ class kMCNN:
             m = 0.
             while m < mThresh:
                 if custom == 0.:
-                    cmd = 'velocity all create 1500. ' + str( int( 100*(time.time()-s)*(comm.Get_rank()+1) )%1000000 + 1 ) + ' rot yes dist gaussian'
-                    self.atoms.command('fix md all nvt temp 1500. 1500. 0.1')
+                    cmd = 'velocity all create 2200. ' + str( int( 100*(time.time()-s)*(comm.Get_rank()+1) )%1000000 + 1 ) + ' rot yes dist gaussian'
+                    self.atoms.command('fix md all nvt temp 2200. 2200. 0.1')
                     self.atoms.command(cmd)
 
                     d=0.
@@ -370,7 +400,7 @@ class kMCNN:
                         + 's dE: ' + str( round(U - newEnergy,3) ) )
         return True, barr+U, tPoint, -1
 
-    def shove(self,n,eMax=25,dist=1.2,mThresh=0.05):
+    def shove(self,n,eMax=25,dist=0.8,mThresh=0.05):
 
         s = time.time()
         st = self.getCoords()
@@ -584,7 +614,12 @@ class kMCNN:
         self.atoms.scatter_atoms('x',1,3,x)
         self.center()
 
+        # print('Length:')
+        # print(d[-1])
+
         if (self.press != 999. and d[-1] != self.atoms.extract_global("boxxhi", 1) - self.atoms.extract_global("boxxlo", 1)):
+            # print(d[-1])
+            # print(self.eval('press'))
             scale = np.abs(d[-1]/Lx)
             if scale > 1.:
                 cmd = 'change_box all x scale ' + str( scale ) + ' y scale ' + str( scale ) + ' z scale ' + str( scale ) + ' remap'
@@ -684,51 +719,17 @@ class kMCNN:
 
     def minimize(self):
 
-        # print('minimization')
-
         if self.press != 999.:
-        #     print(self.eval(press))
-        #     print(self.energy())
-        #     print ('')
 
-            self.atoms.command('fix 1 all box/relax iso ' + str(self.press))
-            def pr(l):
-                # i = self.atoms.extract_global("boxxhi", 1) - self.atoms.extract_global("boxxlo", 1)
-                dxl = 1
-                self.atoms.command('minimize 1e-9 1e-9 100000 10000000')
-                a = ( self.eval('press') - self.press )
-                # print('Disparity Press: ' + str(a))
-                while np.abs(a) > self.P_THRESH:
-                    # print(self.eval('density'))
-                    # print(self.eval('press'))
-                    # print(self.eval('vol'))
-                    # print(self.energy())
-                    # print('')
-                    L = self.atoms.extract_global("boxxhi", 1) - self.atoms.extract_global("boxxlo", 1)
-                    dL = dxl*a*6.3e-7
-                    if dL > 0.01:
-                        dL = 0.01
-                    elif dL < -0.01:
-                        dL = -0.01
-                    L+=dL
-
-                    scale = L/(self.atoms.extract_global("boxxhi", 1) - self.atoms.extract_global("boxxlo", 1))
-
-                    cmd = 'change_box all x scale ' + str( scale ) + ' y scale ' + str( scale ) + ' z scale ' + str( scale ) + ' remap'
-                    self.atoms.command(cmd)
-                    self.atoms.command('minimize 1e-9 1e-9 100000 100000')
-                    # print(self.eval('press'))
-
-                    a = (self.eval('press') - self.press)
-
-            # self.atoms.command('minimize 1e-9 1e-9 100000 100000')
-            l = self.getCoords()[-1]
-            pr(l)
-            # print('Minimized:  ' + str(self.eval('density')))
+            # self.atoms.command('fix 1 all box/relax iso ' + str(self.press))
+            while np.abs(self.eval('press') - self.press) > self.P_THRESH:
+                self.pressure()
+                self.atoms.command('minimize 1e-4 1e-4 1000 10000')
+                # print(self.eval('press') - self.press)
 
         else:
-            self.atoms.command("minimize 1e-9 1e-9 1000000 10000000") ### Pressure Issues
-        # print('/Minimization')
+            self.atoms.command("minimize 1e-4 1e-4 1000 10000") ### Pressure Issues
+
     def getForces(self):
         self.atoms.command('run 0')
         _data = np.array(self.atoms.gather_atoms("f", 1, 3), dtype=ct.c_double)
@@ -764,11 +765,13 @@ class kMCNN:
                 x = self.getCoords()
                 x[-1] = l
                 self.setCoords(x)
-                return self.eval('press') - self.press
+                return (self.eval('press') - self.press)**2.
 
             l = self.getCoords()[-1]
-            z = scipy.optimize.newton(pr,l ,tol=1e-3)
-            if np.abs(z - l ) > self.lStep:
+            lb = max([0.9*l,8.])
+            ub = min([1.1*l,100.])
+            z = scipy.optimize.minimize(pr,l,bounds=((lb,ub),),tol=1e-3).x
+            if np.abs( z - l ) > self.lStep:
                 if l-z > self.lStep:
                     z = l - self.lStep
                 else:
@@ -1018,8 +1021,8 @@ class kMCNN:
             while not F and len(glob.glob('./kMC.*.xyz')) < self.i + num + comm.Get_size() and (time.time() - start)/3600. < timeLimit :
                 self.load(pnum)
 
-                if value[n] < self.B_THRESH+1.:
-                    n=n+1
+                while value[n] < self.B_THRESH+1.:
+                    n=(n+1)%len(value)
 
                 loc = np.argmin( np.abs(value[n] - a) )
 
@@ -1031,8 +1034,8 @@ class kMCNN:
                     F, tEnergy, transition, curv = self.MD(prevStruct,custom=custom)
                 else:
                     n = random.randrange(3*self.atoms.get_natoms())
-                    if value[n] < self.B_THRESH+1.:
-                        n=n+1
+                    while value[n] < self.B_THRESH+1.:
+                        n=(n+1)%len(value)
                     F, tEnergy, transition, curv = self.shove(n)
 
                 at += 1 ### Iterating the attempts
